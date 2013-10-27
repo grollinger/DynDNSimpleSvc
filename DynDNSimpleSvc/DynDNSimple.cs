@@ -1,43 +1,38 @@
 ﻿using System;
 using System.Diagnostics;
-using System.ServiceProcess;
-using DNSimple;
 using System.Net.Http;
+using System.ServiceProcess;
 using System.Threading;
 
-namespace DynDNSimpleSvc
-{
-    public partial class DynDNSimple : ServiceBase
-    {
+namespace DynDNSimpleSvc {
+    public partial class DynDNSimple : ServiceBase {
         public const string EventSource = "DynDNSSimpleSvc";
 
-        DNSimpleRestClient _DNSimple;
-        string _Domain, _RecordName;
+        DNSimpleClient _DNSimple;
+        JSONIPClient _JSONIP;
+        string _Domain, _DomainToken;
         int _RecordID;
         Timer _Timer;
 
-        public DynDNSimple()
-        {
+        public DynDNSimple() {
             InitializeComponent();
         }
 
-        protected override void OnStart(string[] args)
-        {
+        protected override void OnStart(string[] args) {
             OnStart();
         }
 
-        public void OnStart()
-        {
+        public void OnStart() {
             var interval = Int32.Parse(System.Configuration.ConfigurationManager.AppSettings["updateinterval_minutes"]);
-            var user = System.Configuration.ConfigurationManager.AppSettings["username"];
-            var pass = System.Configuration.ConfigurationManager.AppSettings["password"];
             _Domain = System.Configuration.ConfigurationManager.AppSettings["domain"];
             _RecordID = Int32.Parse(System.Configuration.ConfigurationManager.AppSettings["recordid"]);
-            _RecordName = System.Configuration.ConfigurationManager.AppSettings["recordname"];
+            _DomainToken = System.Configuration.ConfigurationManager.AppSettings["domain_token"];
+
+
+            _DNSimple = new DNSimpleClient(_Domain, _DomainToken);
+            _JSONIP = new JSONIPClient();
 
             
-
-            _DNSimple = new DNSimpleRestClient(user, pass);
 
             _Timer = new Timer(OnTick);
 
@@ -46,41 +41,37 @@ namespace DynDNSimpleSvc
             _Timer.Change(1, intervalMs);
         }
 
-        void OnTick(object state)
-        {
-            Console.WriteLine("Tick");
-            update_dns();            
+        void OnTick(object state) {
+            update_dns();
         }
 
-        async void update_dns()
-        {
-            try
-            {
-                var ip_json = await new HttpClient().GetStringAsync("http://jsonip.com");
+        async void update_dns() {
+            try {
+                var ipTask = _JSONIP.GetIP();
+                var recordTask = _DNSimple.GetRecord(_RecordID);
 
-                var rdr = new JsonFx.Json.JsonReader();
+                var ip = await ipTask;
+                var record = await recordTask;
 
-                dynamic json = rdr.Read(ip_json);
-                string ip = (string)json.ip;
-
-                var response = _DNSimple.UpdateRecord(_Domain, _RecordID, _RecordName, ip);
+                if ((ip != null && record != null) &&
+                    (ip != record.content))
+                {
+                    await _DNSimple.UpdateRecord(_RecordID, ip);
+                }
             }
-            catch (Exception ex)
-            {
-                
+            catch (Exception ex) {
+
 
                 EventLog.WriteEntry(EventSource,
-                    string.Format("An Exception occurred:\n {0}", ex.ToString()), 
+                    string.Format("An Exception occurred:\n {0}", ex.ToString()),
                     EventLogEntryType.Warning, 1);
             }
         }
 
-        protected override void OnStop()
-        {
+        protected override void OnStop() {
             OnStopped();
         }
-        public void OnStopped()
-        {
+        public void OnStopped() {
             _Timer.Dispose();
         }
     }
